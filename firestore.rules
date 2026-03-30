@@ -1,0 +1,178 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    // User: { id, username, password, role, name, avatar, phone, email, bio }
+    // Client: { id, name, phone, email, debt, notes }
+    // Car: { id, plate, model, vin, clientId, status }
+    // Mechanic: { id, name, isBusy }
+    // Task: { id, text, status, mechanicId, carId, notes, photo }
+    // InventoryItem: { id, name, category, quantity, minStock, unit }
+    // Transaction: { id, itemId, type, quantity, price, date, notes }
+    // PublicRequest: { id, name, phone, car, problem, urgency, status, timestamp }
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN') ||
+        (request.auth.token.email == "Musalini2016@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['id', 'username', 'password', 'role', 'name', 'avatar', 'phone', 'email', 'bio']) &&
+             data.id is string && data.username is string && data.role in ['ADMIN', 'EMPLOYEE'] && data.name is string;
+    }
+
+    function isValidClient(data) {
+      return hasOnlyAllowedFields(['id', 'name', 'phone', 'email', 'debt', 'notes']) &&
+             data.id is string && data.name is string && data.phone is string && data.debt is number;
+    }
+
+    function isValidCar(data) {
+      return hasOnlyAllowedFields(['id', 'brand', 'model', 'year', 'plate', 'vin', 'clientId', 'status']) &&
+             data.id is string && data.plate is string && data.model is string && data.clientId is string && 
+             data.status in ['Відстійник', 'Очікує', 'В роботі', 'Готово', 'Видано'];
+    }
+
+    function isValidMechanic(data) {
+      return hasOnlyAllowedFields(['id', 'name', 'isBusy', 'userId']) &&
+             data.id is string && data.name is string && data.isBusy is bool;
+    }
+
+    function isValidTask(data) {
+      return hasOnlyAllowedFields(['id', 'text', 'status', 'mechanicId', 'carId', 'clientId', 'cost', 'notes', 'photo', 'parts', 'receptionDate', 'completionDate']) &&
+             data.id is string && data.text is string && data.status in ['Нова', 'В роботі', 'Виконана', 'Закрита'] && 
+             data.mechanicId is string && data.carId is string && data.clientId is string && data.receptionDate is string &&
+             (!('cost' in data) || data.cost is number) &&
+             (!('parts' in data) || data.parts is list);
+    }
+
+    function isValidInventoryItem(data) {
+      return hasOnlyAllowedFields(['id', 'name', 'category', 'quantity', 'minStock', 'unit', 'type']) &&
+             data.id is string && data.name is string && data.category is string && data.quantity is number && 
+             data.minStock is number && data.unit is string && data.type in ['REGULAR', 'ONE_TIME'];
+    }
+
+    function isValidTransaction(data) {
+      return hasOnlyAllowedFields(['id', 'itemId', 'type', 'quantity', 'price', 'date', 'notes', 'clientId', 'carId', 'taskId', 'userId']) &&
+             data.id is string && data.itemId is string && data.type in ['INCOME', 'EXPENSE', 'WRITE_OFF'] && 
+             data.quantity is number && data.date is string;
+    }
+
+    function isValidAppointment(data) {
+      return hasOnlyAllowedFields(['id', 'clientId', 'carId', 'carPlate', 'carModel', 'date', 'time', 'status', 'notes']) &&
+             data.id is string && data.clientId is string && data.carPlate is string && data.carModel is string && 
+             data.date is string && data.time is string && data.status in ['SCHEDULED', 'CHECKED_IN', 'CANCELLED'];
+    }
+
+    function isValidPublicRequest(data) {
+      return hasOnlyAllowedFields(['id', 'name', 'phone', 'car', 'problem', 'urgency', 'status', 'timestamp']) &&
+             data.id is string && data.name is string && data.phone is string && data.car is string && data.problem is string && data.urgency in ['NORMAL', 'URGENT', 'CRITICAL'] && data.status in ['PENDING', 'ACCEPTED'] && data.timestamp is string;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      // Allow reading user profiles if authenticated
+      allow read: if isAuthenticated();
+      
+      // Allow creation if:
+      // 1. User is an admin (can create any user)
+      // 2. User is the bootstrap admin (creating their own document)
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (
+        isAdmin() || 
+        (request.auth.token.email == "Musalini2016@gmail.com" && request.auth.token.email_verified == true && request.auth.uid == userId)
+      );
+      
+      // Allow update if:
+      // 1. User is an admin
+      // 2. User is updating their own non-role fields
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (
+        isAdmin() || 
+        (isOwner(userId) && request.resource.data.role == resource.data.role)
+      );
+      
+      allow delete: if isAdmin();
+    }
+
+    match /clients/{clientId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && isValidClient(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /cars/{carId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && isValidCar(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /mechanics/{mechanicId} {
+      allow read: if true; // Publicly readable for status display
+      allow create, update: if isAdmin() && isValidMechanic(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /tasks/{taskId} {
+      allow read: if true; // Publicly readable for status display
+      allow create, update: if isAuthenticated() && isValidTask(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /inventory/{itemId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAdmin() && isValidInventoryItem(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /transactions/{transactionId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidTransaction(request.resource.data);
+      allow update, delete: if isAdmin();
+    }
+
+    match /publicRequests/{requestId} {
+      allow read: if isAuthenticated();
+      allow create: if true && isValidPublicRequest(request.resource.data); // Anyone can create a request
+      allow update: if isAuthenticated() && isValidPublicRequest(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /appointments/{appointmentId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isAuthenticated() && isValidAppointment(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /test/connection {
+      allow read: if true;
+    }
+  }
+}

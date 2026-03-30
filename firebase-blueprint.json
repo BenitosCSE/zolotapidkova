@@ -1,0 +1,188 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "System user (admin or employee)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "role": { "type": "string", "enum": ["ADMIN", "EMPLOYEE"] },
+        "name": { "type": "string" },
+        "avatar": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "bio": { "type": "string" }
+      },
+      "required": ["id", "username", "role", "name"]
+    },
+    "Client": {
+      "title": "Client",
+      "description": "Service client",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "debt": { "type": "number" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "name", "phone"]
+    },
+    "Car": {
+      "title": "Car",
+      "description": "Client's vehicle",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "brand": { "type": "string" },
+        "model": { "type": "string" },
+        "year": { "type": "string" },
+        "plate": { "type": "string" },
+        "vin": { "type": "string" },
+        "clientId": { "type": "string" },
+        "status": { "type": "string", "enum": ["Відстійник", "Очікує", "В роботі", "Готово", "Видано"] }
+      },
+      "required": ["id", "plate", "model", "clientId", "status"]
+    },
+    "Mechanic": {
+      "title": "Mechanic",
+      "description": "Service mechanic",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "isBusy": { "type": "boolean" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "name", "isBusy"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Repair task",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "text": { "type": "string" },
+        "status": { "type": "string", "enum": ["Нова", "В роботі", "Виконана", "Закрита"] },
+        "mechanicId": { "type": "string" },
+        "carId": { "type": "string" },
+        "clientId": { "type": "string" },
+        "cost": { "type": "number" },
+        "notes": { "type": "string" },
+        "photo": { "type": "string" },
+        "parts": { "type": "array" },
+        "receptionDate": { "type": "string" },
+        "completionDate": { "type": "string" }
+      },
+      "required": ["id", "text", "status", "mechanicId", "carId", "clientId", "receptionDate"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "Warehouse item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "quantity": { "type": "number" },
+        "minStock": { "type": "number" },
+        "unit": { "type": "string" },
+        "type": { "type": "string", "enum": ["REGULAR", "ONE_TIME"] }
+      },
+      "required": ["id", "name", "category", "quantity", "minStock", "unit", "type"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Warehouse transaction",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "itemId": { "type": "string" },
+        "type": { "type": "string", "enum": ["INCOME", "EXPENSE", "WRITE_OFF"] },
+        "quantity": { "type": "number" },
+        "price": { "type": "number" },
+        "date": { "type": "string" },
+        "notes": { "type": "string" },
+        "clientId": { "type": "string" },
+        "carId": { "type": "string" },
+        "taskId": { "type": "string" },
+        "userId": { "type": "string" }
+      },
+      "required": ["id", "itemId", "type", "quantity", "date"]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Scheduled service appointment",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "clientId": { "type": "string" },
+        "carId": { "type": "string" },
+        "carPlate": { "type": "string" },
+        "carModel": { "type": "string" },
+        "date": { "type": "string" },
+        "time": { "type": "string" },
+        "status": { "type": "string", "enum": ["SCHEDULED", "CHECKED_IN", "CANCELLED"] },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "clientId", "carPlate", "carModel", "date", "time", "status"]
+    },
+    "PublicRequest": {
+      "title": "PublicRequest",
+      "description": "Public service request from client",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "car": { "type": "string" },
+        "problem": { "type": "string" },
+        "urgency": { "type": "string", "enum": ["NORMAL", "URGENT", "CRITICAL"] },
+        "status": { "type": "string", "enum": ["PENDING", "ACCEPTED"] },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "name", "phone", "car", "problem", "urgency", "status", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/clients/{clientId}": {
+      "schema": "Client",
+      "description": "Client database"
+    },
+    "/cars/{carId}": {
+      "schema": "Car",
+      "description": "Vehicle database"
+    },
+    "/mechanics/{mechanicId}": {
+      "schema": "Mechanic",
+      "description": "Mechanics list"
+    },
+    "/tasks/{taskId}": {
+      "schema": "Task",
+      "description": "Service tasks"
+    },
+    "/inventory/{itemId}": {
+      "schema": "InventoryItem",
+      "description": "Warehouse inventory"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Inventory history"
+    },
+    "/publicRequests/{requestId}": {
+      "schema": "PublicRequest",
+      "description": "Public requests"
+    },
+    "/appointments/{appointmentId}": {
+      "schema": "Appointment",
+      "description": "Scheduled appointments"
+    }
+  }
+}
