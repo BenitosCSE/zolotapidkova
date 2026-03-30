@@ -302,6 +302,15 @@ export default function App() {
     // Simple feedback could be added here if needed
   };
 
+  if (!isAuthReady) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-950 text-orange-500">
+        <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+        <p className="font-black uppercase tracking-widest text-xs">Завантаження системи...</p>
+      </div>
+    );
+  }
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       try {
@@ -309,13 +318,17 @@ export default function App() {
           const userEmail = user.email?.toLowerCase();
           const adminEmail = 'musalini2016@gmail.com';
           
+          console.log('Auth state changed: User logged in', user.email);
+          
           // Try to find user in the users collection first
           const userDocRef = doc(db, 'users', user.uid);
           const userDoc = await getDoc(userDocRef);
           
           if (userDoc.exists()) {
+            console.log('User document found in Firestore');
             setCurrentUser(userDoc.data() as User);
           } else if (userEmail === adminEmail) {
+            console.log('Admin email detected, performing emergency bypass');
             // EMERGENCY BYPASS FOR ADMIN
             const adminUser: User = {
               id: user.uid,
@@ -329,6 +342,7 @@ export default function App() {
             
             try {
               await setDoc(userDocRef, adminUser);
+              console.log('Admin document created/updated in Firestore');
             } catch (err) {
               console.error('Non-critical: Could not save admin doc, but letting user in:', err);
             }
@@ -339,6 +353,7 @@ export default function App() {
             setCurrentUser(null);
           }
         } else {
+          console.log('Auth state changed: No user logged in');
           setCurrentUser(null);
         }
       } catch (err) {
@@ -356,7 +371,7 @@ export default function App() {
     setLoginError(null);
     try {
       await signInWithPopup(auth, googleProvider);
-      setActiveScreen('HOME');
+      setActiveScreen('HANGAR');
     } catch (err: any) {
       console.error('Google Login Error:', err);
       let errorMessage = 'Помилка входу через Google.';
@@ -520,7 +535,7 @@ export default function App() {
           <div className="flex gap-3 w-full md:w-auto">
             <button 
               onClick={() => {
-                setActiveScreen('HOME');
+                setActiveScreen('HANGAR');
                 setCurrentUser(null);
               }}
               className="flex-1 md:flex-none px-6 py-4 bg-gray-900 rounded-2xl border border-orange-500/20 flex items-center justify-center gap-3 active:scale-95 transition-all hover:bg-gray-800 hover:border-orange-500/40 group shadow-lg"
@@ -533,7 +548,7 @@ export default function App() {
             </button>
             <button 
               onClick={() => {
-                setActiveScreen('HOME');
+                setActiveScreen('HANGAR');
                 setCurrentUser(null);
               }}
               className="flex-1 md:flex-none px-6 py-4 bg-gray-900 rounded-2xl border border-orange-500/20 flex items-center justify-center gap-3 active:scale-95 transition-all hover:bg-gray-800 hover:border-orange-500/40 group shadow-lg"
@@ -949,7 +964,7 @@ export default function App() {
         if (user.role === 'EMPLOYEE') {
           setActiveScreen('TASKS');
         } else {
-          setActiveScreen('HOME');
+          setActiveScreen('HANGAR');
         }
       } else {
         setError('Невірний логін або пароль');
@@ -999,12 +1014,15 @@ export default function App() {
               <div className="space-y-3">
                 <p className="text-red-500 text-xs font-bold text-center bg-red-500/10 p-3 rounded-xl border border-red-500/20">{loginError}</p>
                 {auth.currentUser && (
-                  <button 
-                    onClick={() => signOut(auth)}
-                    className="w-full text-[10px] font-black text-orange-500 uppercase tracking-widest hover:underline"
-                  >
-                    Вийти з аккаунта {auth.currentUser.email}
-                  </button>
+                  <div className="flex flex-col gap-2">
+                    <p className="text-[8px] text-gray-500 text-center uppercase font-black">Ви увійшли як: {auth.currentUser.email}</p>
+                    <button 
+                      onClick={() => signOut(auth)}
+                      className="w-full text-[10px] font-black text-orange-500 uppercase tracking-widest hover:underline"
+                    >
+                      Вийти та спробувати інший аккаунт
+                    </button>
+                  </div>
                 )}
               </div>
             )}
