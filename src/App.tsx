@@ -302,15 +302,6 @@ export default function App() {
     // Simple feedback could be added here if needed
   };
 
-  if (!isAuthReady) {
-    return (
-      <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-950 text-orange-500">
-        <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="font-black uppercase tracking-widest text-xs">Завантаження системи...</p>
-      </div>
-    );
-  }
-
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       try {
@@ -2340,6 +2331,15 @@ export default function App() {
       handleFirestoreError(err, OperationType.WRITE, `transactions/${id}`);
     }
   };
+
+  if (!isAuthReady) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-950 text-orange-500">
+        <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+        <p className="font-black uppercase tracking-widest text-xs">Завантаження системи...</p>
+      </div>
+    );
+  }
 
   if (!currentUser) {
     if (activeScreen === 'PUBLIC') return <PublicScreen />;
