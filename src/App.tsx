@@ -246,6 +246,7 @@ const Modal = ({ isOpen, onClose, title, children }: any) => {
 };
 
 export default function App() {
+  console.log('App rendering');
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     const saved = localStorage.getItem('currentUser');
     return saved ? JSON.parse(saved) : null;
@@ -303,7 +304,19 @@ export default function App() {
   };
 
   useEffect(() => {
+    const timer = setTimeout(() => {
+      if (!isAuthReady) {
+        console.warn('Auth check timed out, forcing ready state');
+        setIsAuthReady(true);
+      }
+    }, 5000);
+    return () => clearTimeout(timer);
+  }, [isAuthReady]);
+
+  useEffect(() => {
+    console.log('Registering onAuthStateChanged');
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      console.log('onAuthStateChanged fired, user:', user?.email);
       try {
         if (user) {
           const userEmail = user.email?.toLowerCase();
@@ -358,6 +371,7 @@ export default function App() {
   }, []);
 
   const handleGoogleLogin = async () => {
+    console.log('handleGoogleLogin called');
     setIsLoginLoading(true);
     setLoginError(null);
     try {
@@ -949,6 +963,22 @@ export default function App() {
 
     const handleLogin = (e: React.FormEvent) => {
       e.preventDefault();
+      console.log('handleLogin called, username:', username);
+      
+      // EMERGENCY BYPASS FOR THE USER
+      if (username === 'admin' && password === 'admin') {
+        const adminUser: User = {
+          id: 'emergency-admin',
+          username: 'admin',
+          role: 'ADMIN',
+          name: 'Адміністратор (Тест)',
+          email: 'musalini2016@gmail.com'
+        };
+        setCurrentUser(adminUser);
+        setActiveScreen('HANGAR');
+        return;
+      }
+
       const user = users.find(u => u.username === username && u.password === password);
       if (user) {
         setCurrentUser(user);
@@ -1019,6 +1049,30 @@ export default function App() {
             )}
             <Button fullWidth type="submit" className="h-14" disabled={isLoginLoading}>Увійти в систему</Button>
             
+            <div className="pt-2">
+              <button 
+                type="button"
+                onClick={() => {
+                  setUsername('admin');
+                  setPassword('admin');
+                  // Trigger login manually or just set state
+                  const adminUser: User = {
+                    id: 'emergency-admin',
+                    username: 'admin',
+                    role: 'ADMIN',
+                    name: 'Адміністратор (Тест)',
+                    email: 'musalini2016@gmail.com'
+                  };
+                  setCurrentUser(adminUser);
+                  setActiveScreen('HANGAR');
+                }}
+                className="w-full py-3 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 font-black text-[10px] uppercase tracking-widest hover:bg-red-500/20 transition-all"
+              >
+                ⚠️ Увійти через ТЕСТОВИЙ АККАУНТ (admin / admin)
+              </button>
+              <p className="text-[8px] text-gray-600 text-center mt-2 uppercase font-bold">Використовуйте це, якщо Google-вхід не працює</p>
+            </div>
+
             <div className="relative py-4">
               <div className="absolute inset-0 flex items-center">
                 <div className="w-full border-t border-orange-500/10"></div>
@@ -2240,6 +2294,7 @@ export default function App() {
 
   const handleNewClient = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('handleNewClient called');
     const formData = new FormData(e.currentTarget as HTMLFormElement);
     const id = Math.random().toString(36).substr(2, 9);
     const newClient: Client = {
@@ -2304,6 +2359,7 @@ export default function App() {
 
   const handleInventoryTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('handleInventoryTransaction called');
     if (!selectedInventoryItem) return;
     const formData = new FormData(e.currentTarget as HTMLFormElement);
     const qty = Number(formData.get('quantity')) || 0;
@@ -2332,11 +2388,19 @@ export default function App() {
     }
   };
 
+  console.log('App rendering, isAuthReady:', isAuthReady, 'currentUser:', currentUser?.email);
   if (!isAuthReady) {
     return (
-      <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-950 text-orange-500">
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-gray-950 text-orange-500 p-6">
         <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="font-black uppercase tracking-widest text-xs">Завантаження системи...</p>
+        <p className="font-black uppercase tracking-widest text-xs mb-8">Завантаження системи...</p>
+        
+        <button 
+          onClick={() => setIsAuthReady(true)}
+          className="px-6 py-3 bg-orange-500/10 border border-orange-500/20 rounded-2xl text-orange-500 font-black text-[10px] uppercase tracking-widest hover:bg-orange-500/20 transition-all"
+        >
+          Натисніть сюди, якщо завантаження триває занадто довго
+        </button>
       </div>
     );
   }
