@@ -27,6 +27,7 @@ export interface Car {
   vin?: string;
   clientId: string;
   status: CarStatus;
+  statusUpdatedAt?: string; // ISO string
 }
 
 export interface Client {

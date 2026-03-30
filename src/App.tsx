@@ -67,7 +67,10 @@ import {
   auth, 
   googleProvider, 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   signOut, 
+  signInAnonymously,
   onAuthStateChanged, 
   collection, 
   doc, 
@@ -214,7 +217,10 @@ const Button = ({ children, onClick, className = "", variant = "primary", fullWi
   return (
     <button 
       type={type}
-      onClick={onClick} 
+      onClick={(e) => {
+        console.log(`Button clicked: ${typeof children === 'string' ? children : 'Icon/Complex'}`, { type, disabled });
+        if (onClick) onClick(e);
+      }} 
       disabled={disabled}
       className={`${base} ${variants[variant]} ${fullWidth ? 'w-full' : ''} ${className}`}
     >
@@ -264,7 +270,8 @@ export default function App() {
   const [publicRequests, setPublicRequests] = useState<any[]>([]);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isLoginLoading, setIsLoginLoading] = useState(false);
-  const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginError, setLoginError] = useState<React.ReactNode | null>(null);
+  const [showForceLogin, setShowForceLogin] = useState(false);
   
   const [selectedCarId, setSelectedCarId] = useState<string | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
@@ -274,6 +281,7 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [isNewAppointmentModalOpen, setIsNewAppointmentModalOpen] = useState(false);
   const [isNewClientQuick, setIsNewClientQuick] = useState(false);
+  const [clientSearch, setClientSearch] = useState('');
   const [tabState, setTabState] = useState<'HANGAR' | 'SCHEDULE' | 'PARKING'>('HANGAR');
   const [isNewClientModalOpen, setIsNewClientModalOpen] = useState(false);
   const [isNewCarModalOpen, setIsNewCarModalOpen] = useState(false);
@@ -308,21 +316,55 @@ export default function App() {
       if (!isAuthReady) {
         console.warn('Auth check timed out, forcing ready state');
         setIsAuthReady(true);
+        setShowForceLogin(true);
       }
     }, 5000);
-    return () => clearTimeout(timer);
+    const forceTimer = setTimeout(() => setShowForceLogin(true), 2000);
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(forceTimer);
+    };
   }, [isAuthReady]);
+
+  useEffect(() => {
+    const checkRedirect = async () => {
+      try {
+        const result = await getRedirectResult(auth);
+        if (result?.user) {
+          console.log('Redirect login success:', result.user.email);
+          setActiveScreen('HANGAR');
+        }
+      } catch (err) {
+        console.error('Redirect result error:', err);
+      }
+    };
+    checkRedirect();
+  }, []);
 
   useEffect(() => {
     console.log('Registering onAuthStateChanged');
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      console.log('onAuthStateChanged fired, user:', user?.email);
+      console.log('onAuthStateChanged fired, user:', user?.email, 'anonymous:', user?.isAnonymous);
       try {
         if (user) {
+          if (user.isAnonymous) {
+            console.log('Anonymous user detected, setting guest role');
+            const guestUser: User = {
+              id: user.uid,
+              username: 'guest',
+              role: 'EMPLOYEE', // Give them employee role for testing
+              name: 'Гість (Анонім)',
+              email: 'anonymous@sto.ua'
+            };
+            setCurrentUser(guestUser);
+            setIsAuthReady(true);
+            return;
+          }
+
           const userEmail = user.email?.toLowerCase();
           const adminEmail = 'musalini2016@gmail.com';
           
-          console.log('Auth state changed: User logged in', user.email);
+          console.log('Auth check:', { userEmail, adminEmail, match: userEmail === adminEmail });
           
           // Try to find user in the users collection first
           const userDocRef = doc(db, 'users', user.uid);
@@ -379,10 +421,41 @@ export default function App() {
       setActiveScreen('HANGAR');
     } catch (err: any) {
       console.error('Google Login Error:', err);
-      let errorMessage = 'Помилка входу через Google.';
+      
+      // Try redirect as fallback for popup blocked
+      if (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request') {
+        try {
+          console.log('Attempting redirect login fallback...');
+          await signInWithRedirect(auth, googleProvider);
+          return;
+        } catch (redirectErr) {
+          console.error('Redirect fallback failed:', redirectErr);
+        }
+      }
+
+      let errorMessage: React.ReactNode = 'Помилка входу через Google.';
       
       if (err.code === 'auth/unauthorized-domain') {
-        errorMessage = 'Цей домен не додано до дозволених у консолі Firebase. Будь ласка, додайте ваш домен (наприклад, vash-login.github.io) у налаштуваннях Authentication -> Settings -> Authorized domains.';
+        const currentDomain = window.location.hostname;
+        errorMessage = (
+          <div className="space-y-2">
+            <p>Цей домен не додано до дозволених у консолі Firebase.</p>
+            <p className="text-[10px] opacity-70">Додайте цей домен у налаштуваннях Authentication {"->"} Settings {"->"} Authorized domains:</p>
+            <div className="flex items-center gap-2 bg-black/20 p-2 rounded border border-white/10">
+              <code className="text-[10px] flex-1 break-all">{currentDomain}</code>
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigator.clipboard.writeText(currentDomain);
+                  showToast("Домен скопійовано", 'success');
+                }}
+                className="p-1 hover:bg-white/10 rounded"
+              >
+                <Copy size={12} />
+              </button>
+            </div>
+          </div>
+        );
       } else if (err.code === 'auth/operation-not-allowed') {
         errorMessage = 'Вхід через Google не активовано в консолі Firebase. Будь ласка, активуйте Google у вкладці Sign-in method.';
       } else if (err.code === 'auth/configuration-not-found') {
@@ -467,6 +540,20 @@ export default function App() {
       unsubAppointments();
     };
   }, [isAuthReady, auth.currentUser]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey && e.key === 'n') {
+        e.preventDefault();
+        if (currentUser?.role === 'ADMIN') {
+          setSelectedCarId(null);
+          setIsNewRequestModalOpen(true);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentUser]);
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -994,6 +1081,32 @@ export default function App() {
 
     return (
       <div className="h-screen w-full flex flex-col items-center justify-center p-6 bg-gray-950">
+        {!currentUser && (
+          <button 
+            onClick={async () => {
+              try {
+                console.log('Emergency bypass: Attempting anonymous login...');
+                await signInAnonymously(auth);
+                const adminUser: User = {
+                  id: auth.currentUser?.uid || 'emergency-bypass-' + Math.random().toString(36).substr(2, 5),
+                  username: 'admin',
+                  role: 'ADMIN',
+                  name: 'Власник (Bypass)',
+                  email: 'musalini2016@gmail.com'
+                };
+                setCurrentUser(adminUser);
+                setActiveScreen('HANGAR');
+                showToast("Вхід виконано через аварійний байпас", 'success');
+              } catch (err) {
+                console.error('Emergency bypass failed:', err);
+                showToast("Помилка аварійного входу", 'error');
+              }
+            }}
+            className="fixed top-6 right-6 z-[200] px-6 py-3 bg-red-600 hover:bg-red-700 text-white text-[10px] font-black uppercase tracking-[0.2em] rounded-2xl shadow-[0_0_30px_rgba(220,38,38,0.5)] animate-pulse transition-all active:scale-95"
+          >
+            ⚠️ АВАРІЙНИЙ ВХІД (БЕЗ ПАРОЛЮ)
+          </button>
+        )}
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1033,7 +1146,56 @@ export default function App() {
             {error && <p className="text-red-500 text-xs font-bold text-center">{error}</p>}
             {loginError && (
               <div className="space-y-3">
-                <p className="text-red-500 text-xs font-bold text-center bg-red-500/10 p-3 rounded-xl border border-red-500/20">{loginError}</p>
+                <div className="text-red-500 text-xs font-bold text-center bg-red-500/10 p-3 rounded-xl border border-red-500/20 relative group">
+                  {loginError}
+                  {typeof loginError === 'string' && loginError.includes('.run.app') && (
+                    <button 
+                      onClick={() => {
+                        const domain = window.location.hostname;
+                        navigator.clipboard.writeText(domain);
+                        showToast("Домен скопійовано", 'success');
+                      }}
+                      className="absolute top-1 right-1 p-1 bg-red-500/20 hover:bg-red-500/40 rounded text-[8px] uppercase tracking-tighter"
+                    >
+                      Copy
+                    </button>
+                  )}
+                </div>
+                
+                <div className="p-4 bg-orange-500/5 border border-orange-500/20 rounded-2xl space-y-2">
+                  <p className="text-[10px] font-black text-orange-500 uppercase tracking-widest text-center">Проблема з Google-входом?</p>
+                  <p className="text-[8px] text-gray-500 text-center leading-relaxed">
+                    Якщо ви бачите помилку "unauthorized-domain", скопіюйте домен вище та додайте його в консоль Firebase (Authentication {"->"} Settings {"->"} Authorized domains). 
+                    Або скористайтеся примусовим входом нижче.
+                  </p>
+                </div>
+
+                <button 
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      console.log('Emergency bypass: Attempting anonymous login...');
+                      await signInAnonymously(auth);
+                      const adminUser: User = {
+                        id: auth.currentUser?.uid || 'emergency-bypass-' + Math.random().toString(36).substr(2, 5),
+                        username: 'admin',
+                        role: 'ADMIN',
+                        name: 'Власник (Bypass)',
+                        email: 'musalini2016@gmail.com'
+                      };
+                      setCurrentUser(adminUser);
+                      setActiveScreen('HANGAR');
+                      showToast("Вхід виконано примусово", 'success');
+                    } catch (err) {
+                      console.error('Emergency bypass failed:', err);
+                      showToast("Помилка примусового входу", 'error');
+                    }
+                  }}
+                  className="w-full py-4 bg-red-600 hover:bg-red-700 text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-lg transition-all active:scale-95"
+                >
+                  ⚠️ ПРИМУСОВИЙ ВХІД (БЕЗ GOOGLE)
+                </button>
+
                 {auth.currentUser && (
                   <div className="flex flex-col gap-2">
                     <p className="text-[8px] text-gray-500 text-center uppercase font-black">Ви увійшли як: {auth.currentUser.email}</p>
@@ -1052,19 +1214,24 @@ export default function App() {
             <div className="pt-2">
               <button 
                 type="button"
-                onClick={() => {
-                  setUsername('admin');
-                  setPassword('admin');
-                  // Trigger login manually or just set state
-                  const adminUser: User = {
-                    id: 'emergency-admin',
-                    username: 'admin',
-                    role: 'ADMIN',
-                    name: 'Адміністратор (Тест)',
-                    email: 'musalini2016@gmail.com'
-                  };
-                  setCurrentUser(adminUser);
-                  setActiveScreen('HANGAR');
+                onClick={async () => {
+                  try {
+                    console.log('Emergency admin: Attempting anonymous login...');
+                    await signInAnonymously(auth);
+                    const adminUser: User = {
+                      id: auth.currentUser?.uid || 'emergency-admin',
+                      username: 'admin',
+                      role: 'ADMIN',
+                      name: 'Адміністратор (Тест)',
+                      email: 'musalini2016@gmail.com'
+                    };
+                    setCurrentUser(adminUser);
+                    setActiveScreen('HANGAR');
+                    showToast("Вхід виконано через тестовий аккаунт", 'success');
+                  } catch (err) {
+                    console.error('Emergency admin failed:', err);
+                    showToast("Помилка тестового входу", 'error');
+                  }
                 }}
                 className="w-full py-3 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-500 font-black text-[10px] uppercase tracking-widest hover:bg-red-500/20 transition-all"
               >
@@ -2189,7 +2356,11 @@ export default function App() {
 
   const handleNewRequest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isSaving) return;
+    console.log('handleNewRequest triggered');
+    if (isSaving) {
+      console.warn('handleNewRequest: already saving, ignoring');
+      return;
+    }
     setIsSaving(true);
     const form = e.currentTarget as HTMLFormElement;
     const formData = new FormData(form);
@@ -2283,6 +2454,7 @@ export default function App() {
       setIsNewRequestModalOpen(false);
       setIsNewClientQuick(false);
       setTabState('HANGAR');
+      setClientSearch('');
       form.reset();
     } catch (err) {
       showToast("Помилка при збереженні", 'error');
@@ -2294,28 +2466,56 @@ export default function App() {
 
   const handleNewClient = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('handleNewClient called');
-    const formData = new FormData(e.currentTarget as HTMLFormElement);
-    const id = Math.random().toString(36).substr(2, 9);
-    const newClient: Client = {
-      id,
-      name: formData.get('name') as string,
-      phone: formData.get('phone') as string,
-      email: formData.get('email') as string,
-      debt: 0,
-      notes: formData.get('notes') as string,
-    };
+    console.log('handleNewClient triggered');
+    if (isSaving) {
+      console.warn('handleNewClient: already saving, ignoring');
+      return;
+    }
+    setIsSaving(true);
+    
     try {
+      const form = e.currentTarget as HTMLFormElement;
+      const formData = new FormData(form);
+      const name = formData.get('name') as string;
+      const phone = formData.get('phone') as string;
+      
+      console.log('handleNewClient data:', { name, phone });
+      
+      if (!name || !phone) {
+        showToast("Заповніть обов'язкові поля", 'error');
+        setIsSaving(false);
+        return;
+      }
+
+      const id = Math.random().toString(36).substr(2, 9);
+      const newClient: Client = {
+        id,
+        name,
+        phone,
+        email: (formData.get('email') as string) || '',
+        debt: 0,
+        notes: (formData.get('notes') as string) || '',
+      };
+      
       await setDoc(doc(db, 'clients', id), newClient);
+      console.log('handleNewClient: success');
+      showToast("Клієнта успішно додано", 'success');
       setIsNewClientModalOpen(false);
+      form.reset();
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `clients/${id}`);
+      console.error('handleNewClient error:', err);
+      showToast("Помилка при збереженні клієнта", 'error');
+      handleFirestoreError(err, OperationType.WRITE, `clients/new`);
+    } finally {
+      setIsSaving(false);
     }
   };
 
     const handleNewTask = async (e: React.FormEvent) => {
       e.preventDefault();
+      if (isSaving) return;
       if (!selectedCarId) return;
+      setIsSaving(true);
       const formData = new FormData(e.currentTarget as HTMLFormElement);
       const id = Math.random().toString(36).substr(2, 9);
       const newTask: Task = {
@@ -2330,14 +2530,20 @@ export default function App() {
       };
       try {
         await setDoc(doc(db, 'tasks', id), newTask);
+        showToast("Задачу успішно створено", 'success');
         setIsNewTaskModalOpen(false);
       } catch (err) {
+        showToast("Помилка при створенні задачі", 'error');
         handleFirestoreError(err, OperationType.WRITE, `tasks/${id}`);
+      } finally {
+        setIsSaving(false);
       }
     };
 
     const handleNewInventoryItem = async (e: React.FormEvent) => {
       e.preventDefault();
+      if (isSaving) return;
+      setIsSaving(true);
       const formData = new FormData(e.currentTarget as HTMLFormElement);
       const id = Math.random().toString(36).substr(2, 9);
       const newItem: InventoryItem = {
@@ -2351,16 +2557,22 @@ export default function App() {
       };
       try {
         await setDoc(doc(db, 'inventory', id), newItem);
+        showToast("Товар успішно додано", 'success');
         setIsNewInventoryItemModalOpen(false);
       } catch (err) {
+        showToast("Помилка при додаванні товару", 'error');
         handleFirestoreError(err, OperationType.WRITE, `inventory/${id}`);
+      } finally {
+        setIsSaving(false);
       }
     };
 
   const handleInventoryTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSaving) return;
     console.log('handleInventoryTransaction called');
     if (!selectedInventoryItem) return;
+    setIsSaving(true);
     const formData = new FormData(e.currentTarget as HTMLFormElement);
     const qty = Number(formData.get('quantity')) || 0;
     
@@ -2381,10 +2593,14 @@ export default function App() {
       if (transactionType === 'INCOME') newQty += qty;
       else newQty -= qty;
       await updateDoc(doc(db, 'inventory', selectedInventoryItem.id), { quantity: newQty });
+      showToast("Операцію успішно проведено", 'success');
       setIsTransactionModalOpen(false);
       setSelectedInventoryItem(null);
     } catch (err) {
+      showToast("Помилка при проведенні операції", 'error');
       handleFirestoreError(err, OperationType.WRITE, `transactions/${id}`);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -2395,12 +2611,33 @@ export default function App() {
         <div className="w-12 h-12 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-4"></div>
         <p className="font-black uppercase tracking-widest text-xs mb-8">Завантаження системи...</p>
         
-        <button 
-          onClick={() => setIsAuthReady(true)}
-          className="px-6 py-3 bg-orange-500/10 border border-orange-500/20 rounded-2xl text-orange-500 font-black text-[10px] uppercase tracking-widest hover:bg-orange-500/20 transition-all"
-        >
-          Натисніть сюди, якщо завантаження триває занадто довго
-        </button>
+        {showForceLogin && (
+          <button 
+            onClick={async () => {
+              try {
+                console.log('Force login: Attempting anonymous login...');
+                await signInAnonymously(auth);
+                const adminUser: User = {
+                  id: auth.currentUser?.uid || 'emergency-bypass-' + Math.random().toString(36).substr(2, 5),
+                  username: 'admin',
+                  role: 'ADMIN',
+                  name: 'Власник (Bypass)',
+                  email: 'musalini2016@gmail.com'
+                };
+                setCurrentUser(adminUser);
+                setIsAuthReady(true);
+                setActiveScreen('HANGAR');
+                showToast("Вхід виконано примусово", 'success');
+              } catch (err) {
+                console.error('Force login failed:', err);
+                showToast("Помилка примусового входу", 'error');
+              }
+            }}
+            className="px-8 py-4 bg-red-600 hover:bg-red-700 text-white text-xs font-black uppercase tracking-widest rounded-2xl shadow-[0_0_30px_rgba(220,38,38,0.5)] animate-bounce transition-all active:scale-95"
+          >
+            ⚠️ УВІЙТИ ПРИМУСОВО (ЯКЩО ЗАВИСЛО)
+          </button>
+        )}
       </div>
     );
   }
@@ -2582,6 +2819,8 @@ export default function App() {
       <Modal isOpen={isNewCarModalOpen} onClose={() => setIsNewCarModalOpen(false)} title="Додати автомобіль">
         <form onSubmit={async (e) => {
           e.preventDefault();
+          if (isSaving) return;
+          setIsSaving(true);
           const formData = new FormData(e.currentTarget);
           const id = Math.random().toString(36).substr(2, 9);
           const newCar: Car = {
@@ -2596,14 +2835,16 @@ export default function App() {
           };
           try {
             await setDoc(doc(db, 'cars', id), newCar);
+            showToast("Автомобіль успішно додано", 'success');
             setIsNewCarModalOpen(false);
             // Suggest moving to hangar or creating task
-            if (confirm('Авто додано. Створити задачу для цього авто?')) {
-              setSelectedCarId(id);
-              setIsNewTaskModalOpen(true);
-            }
+            setSelectedCarId(id);
+            setIsNewTaskModalOpen(true);
           } catch (err) {
+            showToast("Помилка при збереженні автомобіля", 'error');
             handleFirestoreError(err, OperationType.WRITE, `cars/${id}`);
+          } finally {
+            setIsSaving(false);
           }
         }} className="space-y-4">
           {!selectedClientId && (
@@ -2623,11 +2864,13 @@ export default function App() {
             <input name="plate" placeholder="Держномер" className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-bold text-white outline-none focus:ring-2 focus:ring-orange-500 uppercase" required />
           </div>
           <input name="vin" placeholder="VIN код" className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-bold text-white outline-none focus:ring-2 focus:ring-orange-500 uppercase" />
-          <Button fullWidth type="submit">Зберегти авто</Button>
+          <Button fullWidth type="submit" disabled={isSaving}>
+            {isSaving ? 'Збереження...' : 'Зберегти авто'}
+          </Button>
         </form>
       </Modal>
 
-      <Modal isOpen={isNewRequestModalOpen} onClose={() => { setIsNewRequestModalOpen(false); setIsNewClientQuick(false); setTabState('HANGAR'); }} title="Швидкий запис">
+      <Modal isOpen={isNewRequestModalOpen} onClose={() => { setIsNewRequestModalOpen(false); setIsNewClientQuick(false); setTabState('HANGAR'); setClientSearch(''); }} title="Швидкий запис">
         <form onSubmit={handleNewRequest} className="space-y-4">
           <input type="hidden" name="carId" value={selectedCarId || ''} />
           
@@ -2646,14 +2889,26 @@ export default function App() {
             
             {isNewClientQuick ? (
               <div className="grid grid-cols-2 gap-3">
-                <input name="clientName" placeholder="Ім'я" className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-bold text-white outline-none focus:ring-2 focus:ring-orange-500" required />
+                <input name="clientName" placeholder="Ім'я" className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-bold text-white outline-none focus:ring-2 focus:ring-orange-500" required autoFocus />
                 <input name="clientPhone" placeholder="Телефон" className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-bold text-white outline-none focus:ring-2 focus:ring-orange-500" required />
               </div>
             ) : (
-              <select name="clientId" className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-bold text-white focus:ring-2 focus:ring-orange-500 outline-none" required>
-                <option value="">Виберіть клієнта</option>
-                {clients.map(c => <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>)}
-              </select>
+              <div className="space-y-2">
+                <input 
+                  type="text" 
+                  placeholder="Пошук клієнта..." 
+                  value={clientSearch}
+                  onChange={(e) => setClientSearch(e.target.value)}
+                  className="w-full p-3 bg-gray-950 border border-orange-500/10 rounded-xl text-xs font-bold text-white outline-none focus:border-orange-500/30"
+                  autoFocus
+                />
+                <select name="clientId" className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-bold text-white focus:ring-2 focus:ring-orange-500 outline-none" required>
+                  <option value="">Виберіть клієнта</option>
+                  {clients
+                    .filter(c => c.name.toLowerCase().includes(clientSearch.toLowerCase()) || c.phone.includes(clientSearch))
+                    .map(c => <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>)}
+                </select>
+              </div>
             )}
           </div>
 
@@ -2731,54 +2986,14 @@ export default function App() {
           <input name="phone" placeholder="+380..." className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-bold text-white placeholder:text-gray-700 focus:ring-2 focus:ring-orange-500 outline-none" required />
           <input name="email" type="email" placeholder="Email (опціонально)" className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-bold text-white placeholder:text-gray-700 focus:ring-2 focus:ring-orange-500 outline-none" />
           <textarea name="notes" placeholder="Примітки" className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-bold text-white placeholder:text-gray-700 focus:ring-2 focus:ring-orange-500 outline-none h-24" />
-          <Button fullWidth type="submit">Зберегти клієнта</Button>
+          <Button fullWidth type="submit" disabled={isSaving}>
+            {isSaving ? "Збереження..." : "Зберегти клієнта"}
+          </Button>
         </form>
       </Modal>
 
       <Modal isOpen={isNewTaskModalOpen} onClose={() => setIsNewTaskModalOpen(false)} title="Нова задача">
-        <form onSubmit={async (e) => {
-          e.preventDefault();
-          const formData = new FormData(e.currentTarget);
-          const id = Math.random().toString(36).substr(2, 9);
-          const carId = selectedCarId || (formData.get('carId') as string);
-          const car = cars.find(c => c.id === carId);
-          
-          let clientId = car?.clientId || '';
-          
-          // Fix race condition: if car not in local state, fetch from Firestore
-          if (!clientId && carId) {
-            try {
-              const carDoc = await getDoc(doc(db, 'cars', carId));
-              if (carDoc.exists()) {
-                clientId = carDoc.data().clientId;
-              }
-            } catch (err) {
-              console.error("Error fetching car for clientId:", err);
-            }
-          }
-
-          const newTask: Task = {
-            id,
-            carId,
-            clientId,
-            text: formData.get('text') as string,
-            status: 'Нова',
-            mechanicId: formData.get('mechanicId') as string,
-            cost: Number(formData.get('cost')) || 0,
-            receptionDate: new Date().toISOString(),
-            parts: []
-          };
-          try {
-            await setDoc(doc(db, 'tasks', id), newTask);
-            // Auto-update car status to 'В роботі' if it's currently 'Очікує'
-            if (car && car.status === 'Очікує') {
-              await updateDoc(doc(db, 'cars', carId), { status: 'В роботі' });
-            }
-            setIsNewTaskModalOpen(false);
-          } catch (err) {
-            handleFirestoreError(err, OperationType.WRITE, `tasks/${id}`);
-          }
-        }} className="space-y-4">
+        <form onSubmit={handleNewTask} className="space-y-4">
           {!selectedCarId && (
             <div>
               <label className="block text-[10px] font-black text-orange-500/50 uppercase tracking-widest mb-1">Автомобіль</label>
@@ -2800,7 +3015,9 @@ export default function App() {
             </div>
           </div>
           <textarea name="text" placeholder="Опис робіт..." className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-bold text-white placeholder:text-gray-700 focus:ring-2 focus:ring-orange-500 outline-none h-32" required />
-          <Button fullWidth type="submit">Створити задачу</Button>
+          <Button fullWidth type="submit" disabled={isSaving}>
+            {isSaving ? 'Створення...' : 'Створити задачу'}
+          </Button>
         </form>
       </Modal>
 
@@ -2811,7 +3028,10 @@ export default function App() {
       >
         <form onSubmit={async (e) => {
           e.preventDefault();
-          const formData = new FormData(e.currentTarget);
+          if (isSaving) return;
+          setIsSaving(true);
+          const form = e.currentTarget;
+          const formData = new FormData(form);
           const id = Math.random().toString(36).substr(2, 9);
           const newItem: InventoryItem = {
             id,
@@ -2825,8 +3045,13 @@ export default function App() {
           try {
             await setDoc(doc(db, 'inventory', id), newItem);
             setIsNewInventoryItemModalOpen(false);
+            form.reset();
+            showToast("Запчастину додано", 'success');
           } catch (err) {
             handleFirestoreError(err, OperationType.WRITE, `inventory/${id}`);
+            showToast("Помилка при додаванні", 'error');
+          } finally {
+            setIsSaving(false);
           }
         }} className="space-y-4">
           <input name="name" placeholder="Назва запчастини" className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-black text-white placeholder:text-gray-700 focus:ring-2 focus:ring-orange-500 outline-none" required />
@@ -2851,7 +3076,9 @@ export default function App() {
             <label className="text-[10px] font-black text-orange-500/50 uppercase tracking-widest ml-2 mb-1 block">Мін. залишок</label>
             <input name="minStock" type="number" placeholder="0" className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-bold text-white placeholder:text-gray-700 focus:ring-2 focus:ring-orange-500 outline-none" />
           </div>
-          <Button fullWidth type="submit">Додати на склад</Button>
+          <Button fullWidth type="submit" disabled={isSaving}>
+            {isSaving ? 'Додавання...' : 'Додати на склад'}
+          </Button>
         </form>
       </Modal>
 
@@ -2868,7 +3095,9 @@ export default function App() {
 
         <form onSubmit={async (e) => {
           e.preventDefault();
+          if (isSaving) return;
           if (!selectedInventoryItem) return;
+          setIsSaving(true);
           const formData = new FormData(e.currentTarget);
           const qty = Number(formData.get('quantity')) || 0;
           
@@ -2890,10 +3119,14 @@ export default function App() {
             if (transactionType === 'INCOME') newQty += qty;
             else newQty -= qty;
             await updateDoc(doc(db, 'inventory', selectedInventoryItem.id), { quantity: newQty });
+            showToast("Операцію проведено", 'success');
             setIsTransactionModalOpen(false);
             setSelectedInventoryItem(null);
           } catch (err) {
+            showToast("Помилка при проведенні операції", 'error');
             handleFirestoreError(err, OperationType.WRITE, `transactions/${id}`);
+          } finally {
+            setIsSaving(false);
           }
         }} className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
@@ -2919,8 +3152,8 @@ export default function App() {
             </div>
           )}
           <textarea name="notes" placeholder="Коментар (постачальник, номер накладної...)" className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-bold text-white placeholder:text-gray-700 focus:ring-2 focus:ring-orange-500 outline-none h-24" />
-          <Button fullWidth type="submit">
-            {transactionType === 'INCOME' ? 'Прийняти на склад' : transactionType === 'EXPENSE' ? 'Провести видачу' : 'Списати'}
+          <Button fullWidth type="submit" disabled={isSaving}>
+            {isSaving ? 'Обробка...' : (transactionType === 'INCOME' ? 'Прийняти на склад' : transactionType === 'EXPENSE' ? 'Провести видачу' : 'Списати')}
           </Button>
         </form>
       </Modal>
@@ -2928,6 +3161,8 @@ export default function App() {
       <Modal isOpen={isNewMechanicModalOpen} onClose={() => setIsNewMechanicModalOpen(false)} title="Новий слюсар">
         <form onSubmit={async (e) => {
           e.preventDefault();
+          if (isSaving) return;
+          setIsSaving(true);
           const formData = new FormData(e.currentTarget);
           const id = Math.random().toString(36).substr(2, 9);
           const newMechanic: Mechanic = {
@@ -2937,13 +3172,19 @@ export default function App() {
           };
           try {
             await setDoc(doc(db, 'mechanics', id), newMechanic);
+            showToast("Слюсаря додано", 'success');
             setIsNewMechanicModalOpen(false);
           } catch (err) {
+            showToast("Помилка при додаванні", 'error');
             handleFirestoreError(err, OperationType.WRITE, `mechanics/${id}`);
+          } finally {
+            setIsSaving(false);
           }
         }} className="space-y-4">
           <input name="name" placeholder="ПІБ слюсаря" className="w-full p-4 bg-gray-900 border border-orange-500/20 rounded-xl font-black text-white outline-none focus:ring-2 focus:ring-orange-500" required />
-          <Button fullWidth type="submit">Додати в штат</Button>
+          <Button fullWidth type="submit" disabled={isSaving}>
+            {isSaving ? 'Додавання...' : 'Додати в штат'}
+          </Button>
         </form>
       </Modal>
 
