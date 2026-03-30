@@ -262,6 +262,8 @@ export default function App() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [publicRequests, setPublicRequests] = useState<any[]>([]);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isLoginLoading, setIsLoginLoading] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
   
   const [selectedCarId, setSelectedCarId] = useState<string | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
@@ -284,7 +286,6 @@ export default function App() {
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
   const [selectedInventoryItem, setSelectedInventoryItem] = useState<InventoryItem | null>(null);
   const [transactionType, setTransactionType] = useState<'INCOME' | 'EXPENSE' | 'WRITE_OFF'>('INCOME');
-  const [authError, setAuthError] = useState<string | null>(null);
 
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 
@@ -303,46 +304,56 @@ export default function App() {
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setIsAuthReady(true);
-      if (user) {
-        // Try to find user in the users collection first
-        const userDocRef = doc(db, 'users', user.uid);
-        const userDoc = await getDoc(userDocRef);
-        
-        if (userDoc.exists()) {
-          setCurrentUser(userDoc.data() as User);
-        } else if (user.email === 'Musalini2016@gmail.com') {
-          // If it's the bootstrap admin and doc doesn't exist, create it
-          const adminUser: User = {
-            id: user.uid,
-            username: 'admin',
-            password: 'google-auth', // Placeholder
-            role: 'ADMIN',
-            name: user.displayName || 'Власник',
-            email: user.email || 'Musalini2016@gmail.com',
-            avatar: user.photoURL || undefined
-          };
+      try {
+        if (user) {
+          const userEmail = user.email?.toLowerCase();
+          const adminEmail = 'musalini2016@gmail.com';
           
-          try {
-            await setDoc(userDocRef, adminUser);
+          // Try to find user in the users collection first
+          const userDocRef = doc(db, 'users', user.uid);
+          const userDoc = await getDoc(userDocRef);
+          
+          if (userDoc.exists()) {
+            setCurrentUser(userDoc.data() as User);
+          } else if (userEmail === adminEmail) {
+            // EMERGENCY BYPASS FOR ADMIN
+            const adminUser: User = {
+              id: user.uid,
+              username: 'admin',
+              password: 'google-auth',
+              role: 'ADMIN',
+              name: user.displayName || 'Власник',
+              email: user.email || 'Musalini2016@gmail.com',
+              avatar: user.photoURL || undefined
+            };
+            
+            try {
+              await setDoc(userDocRef, adminUser);
+            } catch (err) {
+              console.error('Non-critical: Could not save admin doc, but letting user in:', err);
+            }
             setCurrentUser(adminUser);
-          } catch (err) {
-            console.error('Error creating admin user document:', err);
-            // Fallback to local state if Firestore write fails (e.g. rules issue during first login)
-            setCurrentUser(adminUser);
+          } else {
+            console.warn('User logged in but not authorized:', user.email);
+            setLoginError(`Користувач ${user.email} не знайдений у системі. Зверніться до адміністратора.`);
+            setCurrentUser(null);
           }
         } else {
-          // Regular user without a document - they might need to be added by an admin
           setCurrentUser(null);
         }
-      } else {
+      } catch (err) {
+        console.error('Auth state change error:', err);
         setCurrentUser(null);
+      } finally {
+        setIsAuthReady(true);
       }
     });
     return () => unsubscribe();
   }, []);
 
   const handleGoogleLogin = async () => {
+    setIsLoginLoading(true);
+    setLoginError(null);
     try {
       await signInWithPopup(auth, googleProvider);
       setActiveScreen('HOME');
@@ -350,17 +361,23 @@ export default function App() {
       console.error('Google Login Error:', err);
       let errorMessage = 'Помилка входу через Google.';
       
-      if (err.code === 'auth/operation-not-allowed') {
-        errorMessage = 'Вхід через Google не активовано в консолі Firebase. Будь ласка, зверніться до розробника.';
+      if (err.code === 'auth/unauthorized-domain') {
+        errorMessage = 'Цей домен не додано до дозволених у консолі Firebase. Будь ласка, додайте ваш домен (наприклад, vash-login.github.io) у налаштуваннях Authentication -> Settings -> Authorized domains.';
+      } else if (err.code === 'auth/operation-not-allowed') {
+        errorMessage = 'Вхід через Google не активовано в консолі Firebase. Будь ласка, активуйте Google у вкладці Sign-in method.';
       } else if (err.code === 'auth/configuration-not-found') {
-        errorMessage = 'Конфігурація Firebase не знайдена. Спробуйте оновити сторінку.';
+        errorMessage = 'Конфігурація Firebase не знайдена. Перевірте налаштування проекту.';
       } else if (err.code === 'auth/popup-blocked') {
         errorMessage = 'Браузер заблокував спливаюче вікно. Будь ласка, дозвольте спливаючі вікна для цього сайту.';
+      } else if (err.code === 'auth/popup-closed-by-user') {
+        errorMessage = 'Вхід скасовано користувачем.';
       } else if (err.message) {
         errorMessage = `Помилка: ${err.message}`;
       }
       
-      setAuthError(errorMessage);
+      setLoginError(errorMessage);
+    } finally {
+      setIsLoginLoading(false);
     }
   };
 
@@ -978,7 +995,20 @@ export default function App() {
               />
             </div>
             {error && <p className="text-red-500 text-xs font-bold text-center">{error}</p>}
-            <Button fullWidth type="submit" className="h-14">Увійти в систему</Button>
+            {loginError && (
+              <div className="space-y-3">
+                <p className="text-red-500 text-xs font-bold text-center bg-red-500/10 p-3 rounded-xl border border-red-500/20">{loginError}</p>
+                {auth.currentUser && (
+                  <button 
+                    onClick={() => signOut(auth)}
+                    className="w-full text-[10px] font-black text-orange-500 uppercase tracking-widest hover:underline"
+                  >
+                    Вийти з аккаунта {auth.currentUser.email}
+                  </button>
+                )}
+              </div>
+            )}
+            <Button fullWidth type="submit" className="h-14" disabled={isLoginLoading}>Увійти в систему</Button>
             
             <div className="relative py-4">
               <div className="absolute inset-0 flex items-center">
@@ -992,10 +1022,15 @@ export default function App() {
             <button 
               type="button"
               onClick={handleGoogleLogin}
-              className="w-full flex items-center justify-center gap-3 p-4 bg-white text-gray-950 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-gray-200 transition-all active:scale-95 shadow-lg"
+              disabled={isLoginLoading}
+              className="w-full flex items-center justify-center gap-3 p-4 bg-white text-gray-950 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-gray-200 transition-all active:scale-95 shadow-lg disabled:opacity-50"
             >
-              <img src="https://www.google.com/favicon.ico" alt="Google" className="w-4 h-4" />
-              Увійти через Google
+              {isLoginLoading ? (
+                <div className="w-4 h-4 border-2 border-gray-950 border-t-transparent rounded-full animate-spin"></div>
+              ) : (
+                <img src="https://www.google.com/favicon.ico" alt="Google" className="w-4 h-4" />
+              )}
+              {isLoginLoading ? 'Завантаження...' : 'Увійти через Google'}
             </button>
 
             <div className="pt-4 border-t border-orange-500/10">

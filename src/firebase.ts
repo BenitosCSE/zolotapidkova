@@ -1,4 +1,5 @@
 import { initializeApp } from 'firebase/app';
+import { getAnalytics } from 'firebase/analytics';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, getDoc, getDocs, updateDoc, deleteDoc, onSnapshot, query, where, orderBy, limit, getDocFromServer } from 'firebase/firestore';
 
@@ -10,6 +11,9 @@ const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
+
+// Initialize Analytics if measurementId is present
+export const analytics = firebaseConfig.measurementId ? getAnalytics(app) : null;
 
 // Test connection and log status
 async function testConnection() {
